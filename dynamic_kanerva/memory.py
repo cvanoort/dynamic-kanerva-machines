@@ -19,11 +19,28 @@
     dkl_M = memory.get_dkl_total(posterior_memory)
 """
 import collections
+import functools
 
 import numpy as np
-import sonnet as snt
 import tensorflow as tf
 import tensorflow_probability as tfp
+from tensorflow.python.keras.layers import Layer
+from tensorflow.python.keras.initializers import constant, zeros, truncated_normal
+
+
+def define_scope(scope: str = None):
+    def decorator(function):
+        name_scope = scope or function.__name__
+
+        @functools.wraps(function)
+        def decorated(*args, **kwargs):
+            with tf.name_scope(name_scope):
+                return function(*args, **kwargs)
+
+        return decorated
+
+    return decorator
+
 
 MemoryState = collections.namedtuple(
     'MemoryState',
@@ -36,7 +53,7 @@ EPSILON = 1e-6
 
 # disable lint warnings for cleaner algebraic expressions
 # pylint: disable=invalid-name
-class KanervaMemory(snt.AbstractModule):
+class KanervaMemory(Layer):
     """A memory-based generative model."""
 
     def __init__(self,
@@ -69,16 +86,12 @@ class KanervaMemory(snt.AbstractModule):
         self._sample_M = sample_M
         self._w_prior_stddev = tf.constant(w_prior_stddev)
 
-        with self._enter_variable_scope():
-            log_w_stddev = snt.TrainableVariable(
-                [], name='w_stddev',
-                initializers={'w': tf.constant_initializer(np.log(0.3))})()
+        with tf.name_scope(name):
+            log_w_stddev = tf.constant(np.log(0.3))
             if obs_noise_stddev > 0.0:
                 self._obs_noise_stddev = tf.constant(obs_noise_stddev)
             else:
-                log_obs_stddev = snt.TrainableVariable(
-                    [], name='obs_stdddev',
-                    initializers={'w': tf.constant_initializer(np.log(1.0))})()
+                log_obs_stddev = tf.constant(0)
                 self._obs_noise_stddev = tf.exp(log_obs_stddev)
         self._w_stddev = tf.exp(log_w_stddev)
         self._w_prior_dist = tfp.distributions.MultivariateNormalDiag(
@@ -139,8 +152,7 @@ class KanervaMemory(snt.AbstractModule):
     def sample_M(self, memory_state):
         """Sample the memory from its distribution specified by memory_state."""
         if self._sample_M:
-            noise_dist = tfp.distributions.MultivariateNormalFullCovariance(
-                covariance_matrix=memory_state.M_cov)
+            noise_dist = tfp.distributions.MultivariateNormalFullCovariance(covariance_matrix=memory_state.M_cov)
             # C, B, M
             noise = tf.transpose(noise_dist.sample(self._code_size),
                                  [1, 2, 0])
@@ -196,19 +208,15 @@ class KanervaMemory(snt.AbstractModule):
         dkl_M.get_shape().assert_is_compatible_with([S, B])
         return dkl_M
 
-    @snt.reuse_variables
+    @define_scope()
     def _get_prior_params(self):
-        log_var = snt.TrainableVariable(
-            [], name='prior_var_scale',
-            initializers={'w': tf.constant_initializer(
-                np.log(1.0))})()
+        log_var = tf.Variable(0., name='prior_var_scale')
         self._prior_var = tf.ones([self._memory_size]) * tf.exp(log_var) + EPSILON
         prior_cov = tf.matrix_diag(self._prior_var)
-        prior_mean = snt.TrainableVariable(
-            [self._memory_size, self._code_size],
-            name='prior_mean',
-            initializers={'w': tf.truncated_normal_initializer(
-                mean=0.0, stddev=1.0)})()
+        prior_mean = tf.Variable(
+            tf.truncated_normal_initializer(mean=0.0, stddev=1.0)([self._memory_size, self._code_size]),
+            name='prior_mean'
+        )
         return prior_mean, prior_cov
 
     @property
