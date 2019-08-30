@@ -12,7 +12,7 @@ A memory used in the Omniglot experiment in the paper can be
 set-up as follows:
 
 ```python
-from memory import Kanervamemory
+from dynamic_kanerva.memory import Kanervamemory
 
 # Initialisation
 memory = KanervaMemory(code_size=100, memory_size=32)
